@@ -36,7 +36,7 @@ static int OSPJ_getattr(const char *path, struct stat *stbuf);
 static int OSPJ_mkdir(const char *path, mode_t mode);
 static int OSPJ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 static int OSPJ_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-
+const char * makeFP(const char * path);
 node * search(const char *path, int mode);
 
 
@@ -186,6 +186,7 @@ static int OSPJ_mkdir(const char *path, mode_t mode)
 		temp->children[0]->children = NULL;
 		temp->children[0]->size = 0;
 		temp->children[0]->data = NULL;
+		temp->children[0]->cNum = 0;
 		temp->cNum = 1;
 		temp->children[0]->type = 1;
 	}
@@ -202,11 +203,46 @@ static int OSPJ_mkdir(const char *path, mode_t mode)
 		temp->children[i]->children = NULL;
 		temp->children[i]->size = 0;
 		temp->children[i]->data = NULL;
+		temp->children[i]->cNum = 0;
 		temp->cNum++;
 		temp->children[i]->type = 1;
 	}
 
 	return 0;
+}
+
+static int OSPJ_rmdir(const char *path)
+{
+	node * temp = search(path,1);
+	node * parent;
+	int i,j;
+ 	if(temp==NULL)return -EACCES;
+ 	if(temp->cNum !=0)return -ENOTEMPTY;
+ 	parent = temp->parent;
+ 	for(i=0;i<parent->cNum;i++)
+ 	{
+ 		if(parent->children[i]==temp)
+ 		{
+ 			for(j=i;j<parent->cNum-1;j++)
+ 			{
+ 			parent->children[j] = parent->children[j+1];
+ 			}	
+ 			if(parent->cNum==1)
+ 			{
+ 				free(parent->children);
+ 				parent->children=NULL;
+ 			}
+ 			else
+ 			{
+	 			parent->children = (node**)realloc(parent->children,sizeof(node*)*(parent->cNum-1));
+	 		}
+	 		free(temp);
+	 		parent->cNum--;
+ 		}
+ 	}
+
+
+ 	return 0;
 }
 
 static int OSPJ_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
@@ -277,11 +313,81 @@ node * search(const char *path, int mode)
 
 }
 
+const char * makeFP(const char * path)
+{
+
+	char * temp2 = NULL;
+	char * parent = NULL;
+	char * child = NULL;
+	char t_path[PATH_LENGTH];
+	char t_path2[PATH_LENGTH];
+	char t_path3[PATH_LENGTH];
+	char * p_path = (char*)malloc(sizeof(char)*PATH_LENGTH);
+
+	child = strtok(t_path, "/");
+	while (1)
+	{
+		temp2 = strtok(NULL,"/");
+		if (temp2 == NULL)break;
+		else strcpy(child,temp2);
+	}
+	temp2 = NULL;
+	strcpy(t_path2, path);
+	parent = strtok(t_path2, "/");
+	
+	while (1)
+	{
+		temp2 = strtok(NULL, "/");
+		if(temp2==NULL)
+		{
+
+			parent = NULL;
+			break;
+		}
+		if (!strcmp(temp2, child))
+		{
+			break;
+		}
+		else
+		{
+			strcpy(parent,temp2);
+		}
+	}
+
+	
+
+	strcpy(t_path3,path);
+	temp2= strtok(t_path3, "/");
+	strcpy(p_path,"/");
+	while(1)
+	{
+		if(!strcmp(temp2,child))
+		{
+			break;
+		}
+		else
+		{
+			strcat(p_path,temp2);
+			temp2=strtok(NULL,"/");
+			if(!strcmp(temp2,child))
+			{
+				break;
+			}
+			strcat(p_path,"/");
+		}
+		
+	}
+
+	return p_path;
+
+}
+
 static struct fuse_operations OSPJ_oper =
 {
 	.getattr = OSPJ_getattr,
 	.readdir = OSPJ_readdir,
-	.mkdir = OSPJ_mkdir
+	.mkdir = OSPJ_mkdir,
+	.rmdir = OSPJ_rmdir
 };
 
 
