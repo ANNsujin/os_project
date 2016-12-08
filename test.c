@@ -10,7 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-
+#include <time.h>
 
 typedef struct Node
 {
@@ -59,6 +59,9 @@ static int OSPJ_getattr(const char *path, struct stat *stbuf)
         stbuf->st_mode = temp->mode;
         stbuf->st_uid = temp->uid;
         stbuf->st_gid = temp->gid;
+        stbuf->st_atime = temp->atime;
+        stbuf->st_ctime = temp->ctime;
+        stbuf->st_mtime = temp->mtime;
         return 0;
     }
     
@@ -68,6 +71,7 @@ static int OSPJ_getattr(const char *path, struct stat *stbuf)
         stbuf->st_mode = temp->mode;
         stbuf->st_size = temp->size;
         stbuf->st_atime = temp->atime;
+        stbuf->st_ctime = temp->ctime;
         stbuf->st_mtime = temp->mtime;
         stbuf->st_uid = temp->uid;
         stbuf->st_gid = temp->gid;
@@ -87,14 +91,16 @@ static int OSPJ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
         return -ENOENT;
     if (!(temp->mode & S_IRUSR)) // The directory is not allowed to read.
         return -EACCES;
-    
+
     temp2 = temp->parent;
+
     while(temp2) // check the permission of upper hierarchy allows to execute
     {
+        temp2->atime = time(NULL);
         if(!(temp2->mode)& S_IXUSR) return -EACCES;
-        temp2 = temp->parent;
+        temp2 = temp2->parent;
     }
-    
+  
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
     
@@ -190,6 +196,9 @@ static int OSPJ_mkdir(const char *path, mode_t mode)
         temp->children[0]->cNum = 0;
         temp->cNum = 1;
         temp->children[0]->type = 1;
+        temp->children[0]->ctime = time(NULL);
+        temp->children[0]->atime = time(NULL);
+        temp->children[0]->mtime = time(NULL);
     }
     else // The parent already have some children node
     {
@@ -207,6 +216,9 @@ static int OSPJ_mkdir(const char *path, mode_t mode)
         temp->children[i]->cNum = 0;
         temp->cNum++;
         temp->children[i]->type = 1;
+        temp->children[i]->ctime = time(NULL);
+        temp->children[i]->atime = time(NULL);
+        temp->children[i]->mtime = time(NULL);
     }
     return 0;
 }
@@ -278,6 +290,9 @@ static int OSPJ_mknod(const char *path, mode_t mode, dev_t dev)
             temp->children[0]->cNum = 0;
             temp->cNum = 1;
             temp->children[0]->type = 0;
+            temp->children[0]->ctime = time(NULL);
+            temp->children[0]->atime = time(NULL);
+            temp->children[0]->mtime = time(NULL);
         }
         else
         {
@@ -295,6 +310,9 @@ static int OSPJ_mknod(const char *path, mode_t mode, dev_t dev)
             temp->children[i]->cNum = 0;
             temp->cNum++;
             temp->children[i]->type = 0;
+            temp->children[i]->ctime = time(NULL);
+            temp->children[i]->atime = time(NULL);
+            temp->children[i]->mtime = time(NULL);
         }
     }
     return 0;
@@ -314,6 +332,8 @@ static int OSPJ_chmod(const char *path, mode_t mode)
     if(!(temp->mode & S_IWUSR)) return -EACCES; // check the permission of node allows to execute
     
     temp->mode = mode;
+    temp->ctime = time(NULL);
+    temp->atime = time(NULL);
     return 0;
 }
 /*
@@ -350,7 +370,8 @@ static int OSPJ_open(const char *path, struct fuse_file_info *fi)
     if(!(temp->mode & S_IRUSR) && (mode == O_RDONLY || mode == O_RDWR))
         return -EACCES;		// If attempt to open file as 'Read only mode' or 'Read-Write MODE',
     // but MODE of file is not allowed read. -> Permission denied
-    return 0;
+
+   return 0;
 }
 
 // search a node coincided with given path.
@@ -414,6 +435,7 @@ static int OSPJ_read(const char *path, char *buf, size_t size, off_t offset, str
     if (temp->data == NULL) return 0; // There are no data
     if (oflow < 0) size += oflow;
     memcpy(buf, temp->data + offset, size);
+    temp->atime = time(NULL);
     return size;
 }
 
@@ -432,6 +454,9 @@ static int OSPJ_write(const char *path, const char *buf, size_t size, off_t offs
         temp->size = size;
         temp->data = malloc(size);
         memcpy(temp->data, buf, size);
+        temp->ctime = time(NULL);
+        temp->atime = time(NULL);
+        temp->mtime = time(NULL);
     }
     else	// There are already data
     {
@@ -441,6 +466,9 @@ static int OSPJ_write(const char *path, const char *buf, size_t size, off_t offs
             temp->data = realloc(temp->data, temp->size); // reallocate size!
         }
         memcpy(temp->data + offset, buf, size);
+        temp->ctime = time(NULL);
+        temp->atime = time(NULL);
+        temp->mtime = time(NULL);
     }
     return size;
 }
