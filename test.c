@@ -84,12 +84,18 @@ static int OSPJ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
 	node *temp = search(path,1);
 	node *temp2;
 	int i;
-
+		
 	if (temp== NULL)
 		return -ENOENT;
 
 	if (!(temp->mode & S_IRUSR))
 		return -EACCES;
+	temp2 = temp->parent;
+	while(temp2)
+	{
+		if(!(temp2->mode)& S_IXUSR) return -EACCES; 
+		temp2 = temp->parent;
+	}
 
 	filler(buf, ".", NULL, 0);
 	filler(buf, "..", NULL, 0);
@@ -181,7 +187,7 @@ static int OSPJ_mkdir(const char *path, mode_t mode)
 	}
 	
 	temp = search(p_path,1);
-	if(temp==NULL)return -EACCES;
+	if(!(temp->mode & S_IWUSR))return -EACCES;
 	if(temp->children==NULL)
 	{
 		temp->children = (node**)malloc(sizeof(node*));
@@ -197,6 +203,7 @@ static int OSPJ_mkdir(const char *path, mode_t mode)
 		temp->children[0]->cNum = 0;
 		temp->cNum = 1;
 		temp->children[0]->type = 1;
+		
 	}
 	else
 	{
@@ -224,9 +231,10 @@ static int OSPJ_rmdir(const char *path)
 	node * temp = search(path,1);
 	node * parent;
 	int i,j;
- 	if(temp==NULL)return -EACCES;
+ 	if(temp==NULL)return -EEXIST;
  	if(temp->cNum !=0)return -ENOTEMPTY;
  	parent = temp->parent;
+ 	if(!(parent->mode & S_IWUSR))return -EACCES;
  	for(i=0;i<parent->cNum;i++)
  	{
  		if(parent->children[i]==temp)
@@ -316,6 +324,7 @@ static int OSPJ_read(const char *path, char *buf, size_t size, off_t offset, str
 {
 	node * temp = search(path,0);
 	int mode = fi->flags & 3;
+	printf("%x\n",O_RDWR);
 	int oflow = temp->size - (offset + size);
 
 	if (temp == NULL) return -ENOENT;
@@ -448,6 +457,22 @@ static int OSPJ_unlink(const char *path)
 	return 0;
 }
 
+static int OSPJ_chmod (const char *path, mode_t mode)
+{
+	node * temp;
+   
+	temp = search(path,1);
+	if(temp==NULL)
+	{
+   		temp = search(path,0);
+   		if(temp == NULL) return -ENOENT;
+	}
+ 	if(!(temp->mode & S_IWUSR)) return -EACCES;
+	temp->mode = mode;
+       
+       return 0;
+}
+
 const char * makeFP(const char * path)
 {
 
@@ -531,7 +556,8 @@ static struct fuse_operations OSPJ_oper =
 	.utimens = OSPJ_utimens,
 	.open = OSPJ_open,
 	.write = OSPJ_write,
-	.unlink = OSPJ_unlink
+	.unlink = OSPJ_unlink,
+	.chmod = OSPJ_chmod
 };
 
 
