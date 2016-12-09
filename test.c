@@ -46,8 +46,8 @@ static int OSPJ_unlink(const char *path);
 // function list
 const char * makeFP(const char * path);
 node * search(const char *path, int mode);
-static int RemoveDirectory(const char *path);
-void RemoveFile(const char *path);
+const int RemoveDirectory(const char *path);
+const int RemoveFile(const char *path);
 
 //global
 node * root;
@@ -230,10 +230,11 @@ static int OSPJ_mkdir(const char *path, mode_t mode)
 static int OSPJ_rmdir(const char *path)
 {
     node * temp = search(path,1); // check if the directory is or not
-    //node * parent;
-    //int i,j;
+    node * parent;
     if(temp==NULL)return -ENOENT; // There is not the given directory path
     if(temp->cNum !=0)return -ENOTEMPTY;
+    parent = temp->parent;
+    if(!(parent->mode & S_IWUSR))return -EACCES; // check the permission of parent node allows to execute
     RemoveDirectory(path);
     return 0;
 }
@@ -304,7 +305,10 @@ static int OSPJ_mknod(const char *path, mode_t mode, dev_t dev)
 static int OSPJ_unlink(const char *path)
 {
     node * temp = search(path,0);
+    node * parent = search(makeFP(path),1); // find parent
+    int i,j;
     if(temp==NULL)return -ENOENT; // no file
+    if(!(temp->mode & S_IWUSR)) return -EACCES; // check the permission of node allows to execute
     RemoveFile(path);
     return 0;
 }
@@ -646,7 +650,7 @@ const char * makeFP(const char * path)
 }
 
 // romove file
-void RemoveFile(const char *path)
+const int RemoveFile(const char *path)
 {
     node * parent = search(makeFP(path),1); // find parent
     node * temp = search(path,0);
@@ -670,17 +674,16 @@ void RemoveFile(const char *path)
             parent->cNum--; // decrease count of parent's children
         }
     }
+    return 0;
 }
 
 // romove Directory
-static int RemoveDirectory(const char *path)
+const int RemoveDirectory(const char *path)
 {
     node * temp = search(path,1); // check if the directory is or not
     node * parent;
     int i,j;
     parent = temp->parent;
-    if(!(parent->mode & S_IWUSR))return -EACCES; // check the permission of parent node allows to execute
-    
     for(i=0;i<parent->cNum;i++)
     {
         if(parent->children[i]==temp)
