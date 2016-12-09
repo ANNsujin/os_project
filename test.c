@@ -20,8 +20,8 @@ typedef struct Node
     gid_t gid; // group id
     long size; // file size. directory not use
     time_t ctime; // change time
-    time_t mtime;// modification time
-    time_t atime;// access time
+    time_t mtime; // modification time
+    time_t atime; // access time
     char *data; //file data. directory not use
     int type;  // 0 : file 1 : directory
     struct Node *parent; // parent directory
@@ -34,8 +34,8 @@ static int OSPJ_mkdir(const char *path, mode_t mode);
 static int OSPJ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 static int OSPJ_rmdir(const char *path);
 static int OSPJ_chmod(const char *path, mode_t mode);
-//static int OSPJ_chown(const char *path, uid_t uid, gid_t gid);
-//static int OSPJ_rename(const char* from, const char* to);
+static int OSPJ_chown(const char *path, uid_t uid, gid_t gid);
+static int OSPJ_rename(const char* from, const char* to);
 static int OSPJ_mknod(const char *path, mode_t mode, dev_t dev);
 static int OSPJ_utimens(const char *path, const struct timespec tv[2]);
 static int OSPJ_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
@@ -43,9 +43,13 @@ static int OSPJ_open(const char *path, struct fuse_file_info *fi);
 static int OSPJ_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 static int OSPJ_unlink(const char *path);
 
+// function list
 const char * makeFP(const char * path);
 node * search(const char *path, int mode);
+static int RemoveDirectory(const char *path);
+void RemoveFile(const char *path);
 
+//global
 node * root;
 
 static int OSPJ_getattr(const char *path, struct stat *stbuf)
@@ -226,32 +230,11 @@ static int OSPJ_mkdir(const char *path, mode_t mode)
 static int OSPJ_rmdir(const char *path)
 {
     node * temp = search(path,1); // check if the directory is or not
-    node * parent;
-    int i,j;
+    //node * parent;
+    //int i,j;
     if(temp==NULL)return -ENOENT; // There is not the given directory path
     if(temp->cNum !=0)return -ENOTEMPTY;
-    parent = temp->parent;
-    if(!(parent->mode & S_IWUSR))return -EACCES; // check the permission of parent node allows to execute
-    
-    for(i=0;i<parent->cNum;i++)
-    {
-        if(parent->children[i]==temp)
-        {
-            for(j=i;j<parent->cNum-1;j++)
-            {
-                parent->children[j] = parent->children[j+1];
-            }
-            if(parent->cNum==1)
-            {
-                free(parent->children);
-                parent->children=NULL;
-            }
-            else
-                parent->children = (node**)realloc(parent->children,sizeof(node*)*(parent->cNum-1));
-            free(temp);
-            parent->cNum--;
-        }
-    }
+    RemoveDirectory(path);
     return 0;
 }
 
@@ -318,6 +301,14 @@ static int OSPJ_mknod(const char *path, mode_t mode, dev_t dev)
     return 0;
 }
 
+static int OSPJ_unlink(const char *path)
+{
+    node * temp = search(path,0);
+    if(temp==NULL)return -ENOENT; // no file
+    RemoveFile(path);
+    return 0;
+}
+
 // change mode(permission) of file or directory
 static int OSPJ_chmod(const char *path, mode_t mode)
 {
@@ -336,20 +327,111 @@ static int OSPJ_chmod(const char *path, mode_t mode)
     temp->atime = time(NULL);
     return 0;
 }
-/*
+
  // change owner of file or directory
  static int OSPJ_chown(const char *path, uid_t uid, gid_t gid)
  {
- 
-	return 0;
+    node * temp = NULL;
+    
+    temp = search(path,1); // check if the directory is or not.
+    if(temp==NULL) // no directory
+    {
+        temp = search(path,0); // check if the file is or not.
+        if(temp == NULL) return -ENOENT; // no file, so this is not both directory and file
+    }
+    if(!(temp->mode & S_IWUSR)) return -EACCES; // check the permission of node allows to execute
+    
+    temp->uid = uid;
+    temp->gid = gid;
+    temp->ctime = time(NULL);
+    temp->atime = time(NULL);
+    return 0;
  }
  
  //Rename the file, directory, or other object
- static int acu_rename(const char* from, const char* to)
+ static int OSPJ_rename(const char* from, const char* to)
  {
-	return 0;
+    node * from_temp = NULL;
+    node * to_temp = NULL;
+    int check_from = 1;  // check type of node -> 0 : file 1 : directory
+    node * tp_temp = NULL;
+    // to check the node coincided with given 'from' path is directory or file.
+    from_temp = search(from,1); // check if the node coincided with given 'from' path is directory or not
+    if(from_temp==NULL) // This is not directory
+    {   check_from = 0;
+        from_temp = search(from,0); // check if the node coincided with given 'from' path is file or not
+        if(from_temp == NULL) return -ENOENT; // no file, so this is not both directory and file
+    }
+    if(!(from_temp->mode & S_IWUSR)) // check the permission of node allows to execute
+        return -EACCES;
+    
+    char t_path[PATH_LENGTH];
+    char * temp;
+    char * re_name;
+
+    strcpy(t_path, to);
+    temp = strtok(t_path, "/");
+    while(temp != NULL)
+    {
+        re_name = temp;
+        temp = strtok(NULL, "/");
+    }
+    
+    // find each parent of the node coincided with given 'from' path and 'to' path
+    tp_temp = search(makeFP(to),1);
+    if(!(tp_temp->mode & S_IWUSR))return -EACCES; // check the permission of parent node allows to execute
+    if(tp_temp->children==NULL) // The parent have no children node
+    {
+        tp_temp->children = (node**)malloc(sizeof(node*));
+        tp_temp->children[0] = (node*)malloc(sizeof(node));
+        strcpy(tp_temp->children[0]->name,re_name);
+        tp_temp->children[0]->mode = from_temp->mode;
+        tp_temp->children[0]->uid = from_temp->uid;
+        tp_temp->children[0]->gid = from_temp->gid;
+        tp_temp->children[0]->parent = tp_temp;
+        tp_temp->children[0]->children = from_temp->children;
+        tp_temp->children[0]->size = from_temp->size;
+        tp_temp->children[0]->data = from_temp->data;
+        tp_temp->children[0]->cNum = from_temp->cNum;
+        tp_temp->cNum = 1;
+        tp_temp->children[0]->type = from_temp->type;
+        tp_temp->children[0]->ctime = time(NULL);
+        tp_temp->children[0]->atime = time(NULL);
+        tp_temp->children[0]->mtime = time(NULL);
+    }
+    else // The parent already have some children node
+    {
+        int i = tp_temp->cNum;
+        tp_temp->children = (node**)realloc(tp_temp->children,sizeof(node*)*(i+1));
+        tp_temp->children[i] = (node*)malloc(sizeof(node));
+        strcpy(tp_temp->children[i]->name,re_name);
+        tp_temp->children[i]->mode = from_temp->mode;
+        tp_temp->children[i]->uid = from_temp->uid;
+        tp_temp->children[i]->gid = from_temp->gid;
+        tp_temp->children[i]->parent = tp_temp;
+        tp_temp->children[i]->children = from_temp->children;
+        tp_temp->children[i]->size = from_temp->size;
+        tp_temp->children[i]->data = from_temp->data;
+        tp_temp->children[i]->cNum = from_temp->cNum;
+        tp_temp->cNum++;
+        tp_temp->children[i]->type = from_temp->type;
+        tp_temp->children[i]->ctime = time(NULL);
+        tp_temp->children[i]->atime = time(NULL);
+        tp_temp->children[i]->mtime = time(NULL);
+    }
+
+    if (check_from == 1) // rename about 'directory'
+    {
+        RemoveDirectory(from);
+        return 0; 
+    }
+    else // rename about 'file' 
+    {
+        RemoveFile(from);
+        return 0;
+    }
  }
- */
+ 
 static int OSPJ_utimens(const char *path, const struct timespec tv[2])
 {
     node * temp = search(path,0);
@@ -365,15 +447,90 @@ static int OSPJ_open(const char *path, struct fuse_file_info *fi)
     
     if(temp==NULL)return -ENOENT; // no file
     if(!(temp->mode & S_IWUSR) && (mode == O_WRONLY || mode == O_RDWR))
-        return -EACCES;		// If attempt to open file as 'Write only mode' or 'Read-Write MODE',
+        return -EACCES;     // If attempt to open file as 'Write only mode' or 'Read-Write MODE',
     // but MODE of file is not allowed write. -> Permission denied
     if(!(temp->mode & S_IRUSR) && (mode == O_RDONLY || mode == O_RDWR))
-        return -EACCES;		// If attempt to open file as 'Read only mode' or 'Read-Write MODE',
+        return -EACCES;     // If attempt to open file as 'Read only mode' or 'Read-Write MODE',
     // but MODE of file is not allowed read. -> Permission denied
 
    return 0;
 }
 
+static int OSPJ_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    node * temp = search(path,0);
+    int mode = fi->flags & 3; // extract file flag from fuse file information. O_RDONLY, O_WRONLY, O_RDWR
+    int oflow = temp->size - (offset + size); // check overflow!
+    
+    if (temp == NULL) return -ENOENT; // no file
+    if(!(temp->mode & S_IRUSR) && (mode == O_RDONLY || mode == O_RDWR))
+        return -EACCES;     // If attempt to open file as 'Read only mode' or 'Read-Write MODE',
+    // but MODE of file is not allowed read. -> Permission denied
+    if (temp->data == NULL) return 0; // There are no data
+    if (oflow < 0) size += oflow;
+    memcpy(buf, temp->data + offset, size);
+    temp->atime = time(NULL);
+    return size;
+}
+
+static int OSPJ_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    node *temp = search(path,0);
+    int mode = fi->flags & 3; // extract file flag from fuse file information. O_RDONLY, O_WRONLY, O_RDWR
+    int oflow = temp->size - (offset+size); // check overflow!
+    
+    if(temp == NULL) return -ENOENT; // no file
+    if(!(temp->mode & S_IWUSR) && (mode == O_WRONLY || mode == O_RDWR))
+        return -EACCES;     // If attempt to open file as 'Write only mode' or 'Read-Write MODE',
+    // but MODE of file is not allowed write. -> Permission denied
+    if(temp->data == NULL)  // There are no data.
+    {
+        temp->size = size;
+        temp->data = malloc(size);
+        memcpy(temp->data, buf, size);
+        temp->ctime = time(NULL);
+        temp->atime = time(NULL);
+        temp->mtime = time(NULL);
+    }
+    else    // There are already data
+    {
+        if(oflow < 0)   // overflow occurs!
+        {
+            temp->size -= oflow;
+            temp->data = realloc(temp->data, temp->size); // reallocate size!
+        }
+        memcpy(temp->data + offset, buf, size);
+        temp->ctime = time(NULL);
+        temp->atime = time(NULL);
+        temp->mtime = time(NULL);
+    }
+    return size;
+}
+
+static struct fuse_operations OSPJ_oper =
+{
+    .getattr = OSPJ_getattr,
+    .readdir = OSPJ_readdir,
+    // make and remove directory
+    .mkdir = OSPJ_mkdir,
+    .rmdir = OSPJ_rmdir,
+    // make and unlink(remove) file
+    .mknod = OSPJ_mknod,
+    .unlink = OSPJ_unlink,
+    // change mode(permission) and owner
+    .chmod = OSPJ_chmod,
+    .chown = OSPJ_chown,
+    // rename 
+    .rename = OSPJ_rename,
+    // file open, read and write
+    .open = OSPJ_open,
+    .read = OSPJ_read,
+    .write = OSPJ_write,
+    // time
+    .utimens = OSPJ_utimens
+};
+
+// --------------------------------- other funciton list -----------------------
 // search a node coincided with given path.
 node * search(const char *path, int mode)
 {
@@ -420,85 +577,6 @@ node * search(const char *path, int mode)
         }
         else return NULL;
     }
-}
-
-static int OSPJ_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
-{
-    node * temp = search(path,0);
-    int mode = fi->flags & 3; // extract file flag from fuse file information. O_RDONLY, O_WRONLY, O_RDWR
-    int oflow = temp->size - (offset + size); // check overflow!
-    
-    if (temp == NULL) return -ENOENT; // no file
-    if(!(temp->mode & S_IRUSR) && (mode == O_RDONLY || mode == O_RDWR))
-        return -EACCES;		// If attempt to open file as 'Read only mode' or 'Read-Write MODE',
-    // but MODE of file is not allowed read. -> Permission denied
-    if (temp->data == NULL) return 0; // There are no data
-    if (oflow < 0) size += oflow;
-    memcpy(buf, temp->data + offset, size);
-    temp->atime = time(NULL);
-    return size;
-}
-
-static int OSPJ_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
-{
-    node *temp = search(path,0);
-    int mode = fi->flags & 3; // extract file flag from fuse file information. O_RDONLY, O_WRONLY, O_RDWR
-    int oflow = temp->size - (offset+size); // check overflow!
-    
-    if(temp == NULL) return -ENOENT; // no file
-    if(!(temp->mode & S_IWUSR) && (mode == O_WRONLY || mode == O_RDWR))
-        return -EACCES;		// If attempt to open file as 'Write only mode' or 'Read-Write MODE',
-    // but MODE of file is not allowed write. -> Permission denied
-    if(temp->data == NULL)  // There are no data.
-    {
-        temp->size = size;
-        temp->data = malloc(size);
-        memcpy(temp->data, buf, size);
-        temp->ctime = time(NULL);
-        temp->atime = time(NULL);
-        temp->mtime = time(NULL);
-    }
-    else	// There are already data
-    {
-        if(oflow < 0)	// overflow occurs!
-        {
-            temp->size -= oflow;
-            temp->data = realloc(temp->data, temp->size); // reallocate size!
-        }
-        memcpy(temp->data + offset, buf, size);
-        temp->ctime = time(NULL);
-        temp->atime = time(NULL);
-        temp->mtime = time(NULL);
-    }
-    return size;
-}
-
-static int OSPJ_unlink(const char *path)
-{
-    node * parent = search(makeFP(path),1); // find parent
-    node * temp = search(path,0);
-    int i,j;
-    if(temp==NULL)return -ENOENT; // no file
-    for(i=0;i<parent->cNum;i++)
-    {
-        if(parent->children[i]==temp) // find it!
-        {
-            for(j=i;j<parent->cNum-1;j++) // relocate sibling of given node
-            {
-                parent->children[j] = parent->children[j+1];
-            }
-            if(parent->cNum==1)
-            {
-                free(parent->children);
-                parent->children=NULL;
-            }
-            else
-                parent->children = (node**)realloc(parent->children,sizeof(node*)*(parent->cNum-1));
-            free(temp); // unlink given node
-            parent->cNum--; // decrease count of parent's children
-        }
-    }
-    return 0;
 }
 
 // find parent path of given node
@@ -567,30 +645,63 @@ const char * makeFP(const char * path)
     return p_path;
 }
 
-
-static struct fuse_operations OSPJ_oper =
+// romove file
+void RemoveFile(const char *path)
 {
-    .getattr = OSPJ_getattr,
-    .readdir = OSPJ_readdir,
-    // make and remove directory
-    .mkdir = OSPJ_mkdir,
-    .rmdir = OSPJ_rmdir,
-    // make and unlink(remove) file
-    .mknod = OSPJ_mknod,
-    .unlink = OSPJ_unlink,
-    // change mode(permission) and owner
-    .chmod = OSPJ_chmod,
-    //.chown = OSPJ_chown,
-    // rename 
-    //.rename = OSPJ_rename,
-    // file open, read and write
-    .open = OSPJ_open,
-    .read = OSPJ_read,
-    .write = OSPJ_write,
-    // time
-    .utimens = OSPJ_utimens
-};
+    node * parent = search(makeFP(path),1); // find parent
+    node * temp = search(path,0);
+    int i,j;
+    for(i=0;i<parent->cNum;i++)
+    {
+        if(parent->children[i]==temp) // find it!
+        {
+            for(j=i;j<parent->cNum-1;j++) // relocate sibling of given node
+            {
+                parent->children[j] = parent->children[j+1];
+            }
+            if(parent->cNum==1)
+            {
+                free(parent->children);
+                parent->children=NULL;
+            }
+            else
+                parent->children = (node**)realloc(parent->children,sizeof(node*)*(parent->cNum-1));
+            free(temp); // unlink given node
+            parent->cNum--; // decrease count of parent's children
+        }
+    }
+}
 
+// romove Directory
+static int RemoveDirectory(const char *path)
+{
+    node * temp = search(path,1); // check if the directory is or not
+    node * parent;
+    int i,j;
+    parent = temp->parent;
+    if(!(parent->mode & S_IWUSR))return -EACCES; // check the permission of parent node allows to execute
+    
+    for(i=0;i<parent->cNum;i++)
+    {
+        if(parent->children[i]==temp)
+        {
+            for(j=i;j<parent->cNum-1;j++)
+            {
+                parent->children[j] = parent->children[j+1];
+            }
+            if(parent->cNum==1)
+            {
+                free(parent->children);
+                parent->children=NULL;
+            }
+            else
+                parent->children = (node**)realloc(parent->children,sizeof(node*)*(parent->cNum-1));
+            free(temp);
+            parent->cNum--;
+        }
+    }
+    return 0;
+}
 
 int main(int argc, char *argv[])
 {
